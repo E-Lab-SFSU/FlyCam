@@ -7,12 +7,12 @@ Current Goals:
 -Can get Current Location of Extruder Nozzle
 """
 
-# Import PySimpleGUI, cv2, numpy, time libraries
+# Import FreeSimpleGUI, cv2, numpy, time libraries
 # Import picamera libraries
 
 # from picamera.array import PiRGBArray
 # from picamera import PiCamera
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 # import cv2
 # import numpy as np
 # import time

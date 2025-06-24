@@ -10,7 +10,7 @@ Changelog:
 from picamera import PiCamera
 
 import cv2
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 import random
 import time
 

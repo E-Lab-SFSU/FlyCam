@@ -7,7 +7,7 @@ Code Sources:
 https://stackoverflow.com/questions/8705814/get-display-count-and-resolution-for-each-display-in-python-without-xrandr
 """
 
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 import random
 import time
 

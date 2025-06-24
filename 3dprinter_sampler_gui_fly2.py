@@ -45,7 +45,7 @@ Changelog
 
 """
 
-# Import PySimpleGUI, cv2, numpy, time libraries
+# Import FreeSimpleGUI, cv2, numpy, time libraries
 # Import picamera libraries
 
 from datetime import datetime

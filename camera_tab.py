@@ -14,7 +14,7 @@ Bonus:
 
 """
 import cv2
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 from datetime import datetime
 from picamera import PiCamera

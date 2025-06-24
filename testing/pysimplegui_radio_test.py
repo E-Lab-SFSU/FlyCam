@@ -1,6 +1,6 @@
 # PySimpleGUI Radio Testing
 
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 sg.theme("DarkBlue15")
 

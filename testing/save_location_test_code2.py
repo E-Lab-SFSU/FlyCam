@@ -27,7 +27,7 @@ https://stackoverflow.com/questions/40193388/how-to-check-if-a-csv-has-a-header-
 
 import csv
 import os
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 
 # GUI Constants

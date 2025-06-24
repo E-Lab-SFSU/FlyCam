@@ -5,7 +5,7 @@ Source:
 https://github.com/PySimpleGUI/PySimpleGUI/blob/master/DemoPrograms/Demo_OpenCV_Simple_GUI.py
 """
 
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 import cv2
 import numpy as np
 

@@ -5,7 +5,7 @@ Source:
 https://pysimplegui.readthedocs.io/en/latest/#jump-start
 """
 
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 sg.theme("DarkAmber") # Add a touch of color
 
