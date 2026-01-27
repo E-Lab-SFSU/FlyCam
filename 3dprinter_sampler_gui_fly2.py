@@ -1963,7 +1963,8 @@ def main():
 
         
         if event in WL.ALL_CROSS_HAIR_EVENTS:
-            WL.event_manager(event, values, window, camera, CAMERA_LOCK)
+            if values.get("--XHAIR_ON--", True):
+                WL.event_manager(event, values, window, camera, CAMERA_LOCK)
         
         # print("You entered ", values[0])
         

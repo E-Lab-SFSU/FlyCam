@@ -99,14 +99,10 @@ def update_circle(event, values, window):
     if event == LOAD_IMAGE:
         CIRCLE_RADIUS = int(values[RAD_KEY])
 
-    if event == RAD_MINUS_TEN:
-        CIRCLE_RADIUS -= 10
-    elif event == RAD_MINUS_ONE:
+    if event == RAD_MINUS_ONE:
         CIRCLE_RADIUS -= 1
     elif event == RAD_PLUS_ONE:
         CIRCLE_RADIUS += 1
-    elif event == RAD_PLUS_TEN:
-        CIRCLE_RADIUS += 10
 
     # Update Circle Thickness
     circle_thick_number = int(values[CIRCLE_THICKNESS_KEY])
