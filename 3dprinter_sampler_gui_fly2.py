@@ -70,6 +70,7 @@ import module_get_cam_settings as GCS
 import module_experiment_timer as ET
 import module_well_location_helper as WL
 import module_well_location_calculator as WLC
+from module_snake_path import generate_snake_csv
 
 
 easy_rot = 180 #global variable for camera rotation, moved for access
@@ -1595,11 +1596,11 @@ def main():
     ]
 
     corner_layout = [
-        [sg.Text("Row/Col:"), sg.Input("8", size=(4,1), key="--NUM_ROWS--"), sg.Input("12", size=(4,1), key="--NUM_COLS--")],
-        [sg.Text("A1:"), sg.Input("", size=(20,1), key="--A1_COORD--"), sg.Button("Set A1", key="--SET_A1--")],
-        [sg.Text("Amax:"), sg.Input("", size=(20,1), key="--AMAX_COORD--"), sg.Button("Set Amax", key="--SET_AMAX--")],
-        [sg.Text("M1:"), sg.Input("", size=(20,1), key="--M1_COORD--"), sg.Button("Set M1", key="--SET_M1--")],
-        [sg.Text("Mmax:"), sg.Input("", size=(20,1), key="--MMAX_COORD--"), sg.Button("Set Mmax", key="--SET_MMAX--")],
+        [sg.Text("Rows/Cols:"), sg.Input("8", size=(4,1), key="--NUM_ROWS--"), sg.Input("12", size=(4,1), key="--NUM_COLS--")],
+        [sg.Text("Top-Left:"), sg.Input("", size=(20,1), key="--TL_COORD--"), sg.Button("Set TL", key="--SET_TL--")],
+        [sg.Text("Top-Right:"), sg.Input("", size=(20,1), key="--TR_COORD--"), sg.Button("Set TR", key="--SET_TR--")],
+        [sg.Text("Bottom-Left:"), sg.Input("", size=(20,1), key="--BL_COORD--"), sg.Button("Set BL", key="--SET_BL--")],
+        [sg.Text("Bottom-Right:"), sg.Input("", size=(20,1), key="--BR_COORD--"), sg.Button("Set BR", key="--SET_BR--")],
         [sg.Button("Generate Snake CSV", key="--GEN_SNAKE--")]
     ]
 
@@ -1689,6 +1690,7 @@ def main():
     thread_event = threading.Event()
 
     crosshair_overlay = None
+    corners = {"TL": None, "TR": None, "BL": None, "BR": None}
 
     # Create window and show it without plot
     window = sg.Window("3D Printer GUI Test", layout, location=(640, 36))
@@ -1947,6 +1949,37 @@ def main():
         elif event == SAVE_LOC_BUTTON:
             print(f"You pressed: {SAVE_LOC_BUTTON}")
             save_current_location()
+        # Corner capture buttons
+        elif event in ["--SET_TL--", "--SET_TR--", "--SET_BL--", "--SET_BR--"]:
+            loc = get_current_location2()
+            coord_str = f"{loc['X']:.2f},{loc['Y']:.2f},{loc['Z']:.2f}"
+            if event == "--SET_TL--":
+                corners["TL"] = loc
+                window["--TL_COORD--"].update(coord_str)
+            elif event == "--SET_TR--":
+                corners["TR"] = loc
+                window["--TR_COORD--"].update(coord_str)
+            elif event == "--SET_BL--":
+                corners["BL"] = loc
+                window["--BL_COORD--"].update(coord_str)
+            elif event == "--SET_BR--":
+                corners["BR"] = loc
+                window["--BR_COORD--"].update(coord_str)
+        elif event == "--GEN_SNAKE--":
+            try:
+                rows = int(values.get("--NUM_ROWS--", "0"))
+                cols = int(values.get("--NUM_COLS--", "0"))
+            except ValueError:
+                print("Rows/Cols must be integers")
+                continue
+            missing = [k for k,v in corners.items() if v is None]
+            if missing:
+                print(f"Missing corners: {missing}")
+                continue
+            default_dir = os.path.join(os.getcwd(), "testing", "Well_Location")
+            outfile = os.path.join(default_dir, "snake_path.csv")
+            generate_snake_csv(corners, rows, cols, outfile)
+            print(f"Snake path saved to {outfile}")
         elif event == START_PREVIEW:
             
             start_camera_preview(event, values, camera, preview_win_id)
