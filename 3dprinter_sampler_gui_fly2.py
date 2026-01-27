@@ -1181,32 +1181,30 @@ def get_window_location_from_pid(search_pid):
     # print("get_window_location_from_pid")
     # print(f"search_pid: {search_pid}")
     
-    disp = Display()
-    root = disp.screen().root
-    children = root.query_tree().children
-    
-    x_win, y_win = 0, 0
-    
-    for win in children:
-        winName = win.get_wm_name()
-        pid = win.id
-        x, y, width, height = get_absolute_geometry(win, root)
+    try:
+        disp = Display()
+        root = disp.screen().root
+        children = root.query_tree().children
         
-        if pid == search_pid:
-            """
-            print("======Children=======")
-            print(f"winName: {winName}, pid: {pid}")
-            print(f"x:{x}, y:{y}, width:{width}, height:{height}")
-            """
+        x_win, y_win = 0, 0
+        
+        for win in children:
+            try:
+                winName = win.get_wm_name()
+            except Exception:
+                continue
+            pid = win.id
+            x, y, width, height = get_absolute_geometry(win, root)
             
-            x_win = x
-            y_win = y
-            
-            break
-    
-    # print(f"x_win:{x_win}, y_win:{y_win}")
-    return x_win, y_win
-    disp.close()
+            if pid == search_pid:
+                x_win = x
+                y_win = y
+                break
+        disp.close()
+        return x_win, y_win
+    except Exception:
+        # If window vanished or X error, return default
+        return PREVIEW_LOC_X, PREVIEW_LOC_Y
 
 
 def move_window_pid(search_pid, x_new, y_new):
