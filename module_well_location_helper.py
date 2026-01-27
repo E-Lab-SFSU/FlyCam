@@ -49,6 +49,9 @@ RAD_PLUS_TEN = "-RAD PLUS TEN-"
 
 CIRCLE_EVENT_LIST = [RAD_MINUS_TEN, RAD_MINUS_ONE, RAD_PLUS_ONE, RAD_PLUS_TEN]
 
+# Crosshair preview display size (width, height)
+CROSSHAIR_PREVIEW_RES = (640, 480)
+
 # Line Events and Default Value
 LINE_THICKNESS_KEY = "-=LINE THICKNESS KEY=-"
 LINE_THICKNESS = 1
@@ -132,13 +135,30 @@ def draw_on_image(camera, camera_lock=None):
     # temp_filename = "temp.jpg"
     def _capture():
         was_previewing = False
+        saved_preview = None
+        saved_res = getattr(camera, "resolution", None)
         if hasattr(camera, "preview"):
             was_previewing = bool(camera.preview)
             if was_previewing:
+                # Best-effort: pull preview params from main GUI globals if available
+                try:
+                    from 3dprinter_sampler_gui_fly2 import PREVIEW_LOC_X, PREVIEW_LOC_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_ALPHA, PREVIEW_WINDOW_OFFSET
+                    saved_preview = (PREVIEW_LOC_X, PREVIEW_LOC_Y + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_ALPHA)
+                except Exception:
+                    saved_preview = None
                 camera.stop_preview()
+        # Capture at small size to avoid huge preview flashes
+        if saved_res:
+            camera.resolution = (640, 480)
         camera.capture(temp_filename)
+        if saved_res:
+            camera.resolution = saved_res
         if was_previewing:
-            camera.start_preview()
+            if saved_preview:
+                x, y, w, h, alpha = saved_preview
+                camera.start_preview(alpha=alpha, fullscreen=False, window=(x, y, w, h))
+            else:
+                camera.start_preview(fullscreen=False)
 
     if camera_lock:
         with camera_lock:
@@ -157,6 +177,10 @@ def draw_on_image(camera, camera_lock=None):
     # print(f"Center: {center_x, center_y}")
 
     image_edit = draw_cross_hairs(image)
+
+    # Downscale for display to keep window small
+    if image_edit.shape[1] > CROSSHAIR_PREVIEW_RES[0] or image_edit.shape[0] > CROSSHAIR_PREVIEW_RES[1]:
+        image_edit = cv2.resize(image_edit, CROSSHAIR_PREVIEW_RES, interpolation=cv2.INTER_AREA)
 
     # On copy, Draw circle at center x/y with radius
     center_coordinates = (center_x, center_y)
