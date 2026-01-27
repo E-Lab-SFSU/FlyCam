@@ -21,11 +21,13 @@ def generate_snake_csv(corners, rows, cols, outfile):
     tl = corners["TL"]; tr = corners["TR"]; bl = corners["BL"]; br = corners["BR"]
     with open(outfile, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["X", "Y", "Z"])
+        writer.writerow(["image#", "Xcoord", "Ycoord", "Zcoord"])
+        idx = 0
         for r in range(rows):
             r_ratio = r / (rows - 1) if rows > 1 else 0
             col_range = range(cols) if r % 2 == 0 else range(cols-1, -1, -1)
             for c in col_range:
                 c_ratio = c / (cols - 1) if cols > 1 else 0
                 pt = bilinear_point(tl, tr, bl, br, r_ratio, c_ratio)
-                writer.writerow([f"{pt['X']:.2f}", f"{pt['Y']:.2f}", f"{pt['Z']:.2f}"])
+                writer.writerow([idx, f"{pt['X']:.2f}", f"{pt['Y']:.2f}", f"{pt['Z']:.2f}"])
+                idx += 1
