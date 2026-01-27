@@ -22,7 +22,7 @@ TODO:
 -Color Wheel, get it working. (Use a text or input box to capture the value)
 """
 import cv2
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 from os.path import join
 

@@ -28,7 +28,7 @@ https://tutorialdeep.com/knowhow/round-float-to-2-decimal-places-python/
 
 import numpy as np
 import os
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 from datetime import datetime
 

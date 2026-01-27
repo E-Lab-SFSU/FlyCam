@@ -18,7 +18,7 @@ Tasks:
 
 from picamera.array import PiRGBArray
 from picamera import PiCamera
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 import cv2
 import numpy as np
 import time

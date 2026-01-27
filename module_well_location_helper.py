@@ -36,7 +36,7 @@ LOAD_IMAGE = "Update/Load Image"
 
 # Circle Cross Hair Default Values
 CIRCLE_RADIUS = 100
-CIRCLE_COLOR = (255, 0, 0) # RGB
+CIRCLE_COLOR = (0, 0, 255) # BGR
 CIRCLE_THICKNESS = 1
 
 # Circle Events

@@ -5,7 +5,7 @@ Sample GUI Test using a thread to run an experiment
 # ==== Import Libraries ====
 import threading
 import time
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 import TestThread as T
 
@@ -90,4 +90,3 @@ def main():
 
 
 main()
-
