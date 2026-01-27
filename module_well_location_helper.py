@@ -135,17 +135,12 @@ def draw_on_image(camera, camera_lock=None):
     # temp_filename = "temp.jpg"
     def _capture():
         was_previewing = False
-        saved_preview = None
+        # Fallback preview settings (matches default GUI window)
+        saved_preview = (0, 36, 640, 480, 255)
         saved_res = getattr(camera, "resolution", None)
         if hasattr(camera, "preview"):
             was_previewing = bool(camera.preview)
             if was_previewing:
-                # Best-effort: pull preview params from main GUI globals if available
-                try:
-                    from 3dprinter_sampler_gui_fly2 import PREVIEW_LOC_X, PREVIEW_LOC_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_ALPHA, PREVIEW_WINDOW_OFFSET
-                    saved_preview = (PREVIEW_LOC_X, PREVIEW_LOC_Y + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_ALPHA)
-                except Exception:
-                    saved_preview = None
                 camera.stop_preview()
         # Capture at small size to avoid huge preview flashes
         if saved_res:
@@ -154,11 +149,8 @@ def draw_on_image(camera, camera_lock=None):
         if saved_res:
             camera.resolution = saved_res
         if was_previewing:
-            if saved_preview:
-                x, y, w, h, alpha = saved_preview
-                camera.start_preview(alpha=alpha, fullscreen=False, window=(x, y, w, h))
-            else:
-                camera.start_preview(fullscreen=False)
+            x, y, w, h, alpha = saved_preview
+            camera.start_preview(alpha=alpha, fullscreen=False, window=(x, y, w, h))
 
     if camera_lock:
         with camera_lock:
