@@ -667,9 +667,9 @@ def run_experiment_gui(main_values, camera):
     window_exp = sg.Window("Experiment GUI Window", layout_exp, finalize=True)
     
     # Create New Folder If not in "Preview" Mode
-            if main_values[EXP_RADIO_PREVIEW_KEY] == False:
-                folder_path = P.create_and_get_folder_path()
-            print("Not in Preview Mode, creating folder:", folder_path)
+    if main_values[EXP_RADIO_PREVIEW_KEY] == False:
+        folder_path = P.create_and_get_folder_path()
+        print("Not in Preview Mode, creating folder:", folder_path)
     
     # Setup how long to wait before moving to next well (and GUI loop)
     time_to_wait = 2000 # in millisec
