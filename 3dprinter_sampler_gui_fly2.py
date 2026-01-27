@@ -210,6 +210,29 @@ EXPO_SETTLE_TIME_KEY = "-EXPO SETTLE TIME-"
 SET_EXPOSURE_MODE = "Set Expo"
 
 is_running_experiment = False
+# Camera access lock to avoid preview/still races
+CAMERA_LOCK = threading.Lock()
+
+# Numeric-only inputs to guard
+NUMERIC_KEYS = [
+    "-ROTATION_INPUT-",
+    "-PIC_WIDTH_INPUT-",
+    "-PIC_HEIGHT_INPUT-",
+    "-PREVIEW LOC X KEY-",
+    "-PREVIEW LOC Y KEY-",
+    "-PREVIEW WIDTH KEY-",
+    "-PREVIEW HEIGHT KEY-",
+    "-ALPHA KEY-",
+    "-EXPO SETTLE TIME-",
+]
+
+# Small-slice sleep so Stop is responsive
+def sleep_with_stop(total_seconds, stop_event, chunk=0.25):
+    elapsed = 0.0
+    while elapsed < total_seconds and not stop_event.is_set():
+        wait = min(chunk, total_seconds - elapsed)
+        time.sleep(wait)
+        elapsed += wait
 
 # ==== USER DEFINED FUNCTIONS =====
 
@@ -319,37 +342,32 @@ def run_experiment(event, values, thread_event, camera, preview_win_id):
     # Go into Absolute Positioning Mode
     printer.run_gcode(C.ABSOLUTE_POS)
     
+    folder_path = None
     # Create New Folder If not in "Preview" Mode
     if values[EXP_RADIO_PREVIEW_KEY] == False:
         folder_path = P.create_and_get_folder_path()
         print("Not in Preview Mode, creating folder:", folder_path)
-        
-    # Get Camera Settings Module
-    # Initialize unique CSV camera settings file
-    GCS.SAVE_CSV_FOLDER = folder_path
-    GCS.init_csv_file()
+        # Initialize unique CSV camera settings file
+        GCS.SAVE_CSV_FOLDER = folder_path
+        GCS.init_csv_file()
     
     # Create While loop to check if thread_event is not set (closing)
     count_run = 0
-    # while not thread_event.isSet():
-    # while True:
-    while is_running_experiment:
+    while not thread_event.is_set():
         
         # TODO: Put in the rest of the code for Pic, Video, Preview from 3dprinter_start_experiment or prepare_experiment
         print("=========================")
         print("Run #", count_run)
         
         well_number = 1
-        printer.run_gcode(location)
-        print("start of 10 sec wait")
-        time.sleep(10)
-        print("10 sec wait over")
+        sleep_with_stop(10, thread_event)
         
         for location in gcode_string_list:
-            # print(gcode_string)
+            if thread_event.is_set():
+                break
             printer.run_gcode(location)
             print("Going to Well Number:", well_number)
-            time.sleep(4)
+            sleep_with_stop(4, thread_event)
             if values[EXP_RADIO_PREVIEW_KEY] == True:
                 print("Preview Mode is On, only showing preview camera \n")
                 # camera.start_preview(fullscreen=False, window=(30, 30, 500, 500))
@@ -358,30 +376,16 @@ def run_experiment(event, values, thread_event, camera, preview_win_id):
                 # camera.stop_preview()
             elif values[EXP_RADIO_VID_KEY] == True:
                 print("Recording Video Footage")
-                file_full_path = P.get_file_full_path(folder_path, well_number)
+                if folder_path:
+                    file_full_path = P.get_file_full_path(folder_path, well_number)
                 # TODO: Change to Video Captures
-                # camera.capture(file_full_path)
             elif values[EXP_RADIO_PIC_KEY] == True:
                 print("Taking Pictures Only")
-                file_full_path = P.get_file_full_path(folder_path, well_number)
-                # print(file_full_path)
-                
-                # Change Image Capture Resolution
-                # pic_width = PIC_WIDTH
-                # pic_height = PIC_HEIGHT
-                
-                #camera.stop_preview()
-                #camera.resolution = (pic_width, pic_height)
-                # time.sleep(.1)
-                #camera.capture(file_full_path)
-                # camera.start_preview()
-                #start_camera_preview(event, values, camera, preview_win_id)
-                
-                
-                get_well_picture(camera, file_full_path)
-                
-                data_row = GCS.gen_cam_data(file_full_path, camera)
-                GCS.append_to_csv_file(data_row)
+                if folder_path:
+                    file_full_path = P.get_file_full_path(folder_path, well_number)
+                    get_well_picture(camera, file_full_path)
+                    data_row = GCS.gen_cam_data(file_full_path, camera)
+                    GCS.append_to_csv_file(data_row)
                 
                 # Return to streaming resolution: 640 x 480 (or it will crash)
                 # Bug: Crashes anyway because of threading
@@ -409,6 +413,8 @@ def run_experiment(event, values, thread_event, camera, preview_win_id):
     print("=========================")
     print("Experiment Stopped")
     print("=========================")
+    global is_running_experiment
+    is_running_experiment = False
 
 
 def run_experiment2(event, values, thread_event, camera, preview_win_id):
@@ -451,23 +457,18 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
     # Go into Absolute Positioning Mode
     printer.run_gcode(C.ABSOLUTE_POS)
     
+    folder_path = None
     # Create New Folder If not in "Preview" Mode
     if values[EXP_RADIO_PREVIEW_KEY] == False:
         dest_folder = PIC_SAVE_FOLDER
-        # folder_path = P.create_and_get_folder_path(dest_folder)
         folder_path = P.create_and_get_folder_path2(dest_folder)
         print("Not in Preview Mode, creating folder:", folder_path)
-        
-    # Get Camera Settings Module
-    # Initialize unique CSV camera settings file
-    GCS.SAVE_CSV_FOLDER = folder_path
-    GCS.init_csv_file()
+        GCS.SAVE_CSV_FOLDER = folder_path
+        GCS.init_csv_file()
     
     # Create While loop to check if thread_event is not set (closing)
     count_run = 0
-    # while not thread_event.isSet():
-    # while True:
-    while is_running_experiment:
+    while not thread_event.is_set():
         
         # TODO: Put in the rest of the code for Pic, Video, Preview from 3dprinter_start_experiment or prepare_experiment
         
@@ -480,15 +481,16 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
             well_number = 1
             
             for location in gcode_string_list:
-                # print(gcode_string)
+                if thread_event.is_set():
+                    break
                 printer.run_gcode(location)
                 print("Going to Well Number:", well_number)
                 if well_number == 1:
                     print(f"Pausing at well {well_number} for 10 seconds")
-                    time.sleep(10)
+                    sleep_with_stop(10, thread_event)
                     print("pause is complete")
                 else:
-                    time.sleep(4)
+                    sleep_with_stop(4, thread_event)
                 if values[EXP_RADIO_PREVIEW_KEY] == True:
                     print("Preview Mode is On, only showing preview camera \n")
                     # camera.start_preview(fullscreen=False, window=(30, 30, 500, 500))
@@ -497,12 +499,14 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
                     # camera.stop_preview()
                 elif values[EXP_RADIO_VID_KEY] == True:
                     print("Recording Video Footage")
-                    file_full_path = P.get_file_full_path(folder_path, well_number)
+                    if folder_path:
+                        file_full_path = P.get_file_full_path(folder_path, well_number)
                     # TODO: Change to Video Captures
                     # camera.capture(file_full_path)ffd4
                 elif values[EXP_RADIO_PIC_KEY] == True:
                     print("Taking Pictures Only")
-                    file_full_path = P.get_file_full_path(folder_path, well_number)
+                    if folder_path:
+                        file_full_path = P.get_file_full_path(folder_path, well_number)
                     # print(file_full_path)
                     
                     # Change Image Capture Resolution
@@ -516,11 +520,10 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
                     # camera.start_preview()
                     #start_camera_preview(event, values, camera, preview_win_id)
                     
-                    
-                    get_well_picture(camera, file_full_path)
-                    
-                    data_row = GCS.gen_cam_data(file_full_path, camera)
-                    GCS.append_to_csv_file(data_row)
+                    if folder_path:
+                        get_well_picture(camera, file_full_path)
+                        data_row = GCS.gen_cam_data(file_full_path, camera)
+                        GCS.append_to_csv_file(data_row)
                     
                     # Return to streaming resolution: 640 x 480 (or it will crash)
                     # Bug: Crashes anyway because of threading
@@ -580,6 +583,7 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
     print(f"Ran experiment for {elapsed_seconds:.1f} seconds, or {elapsed_seconds/60:.1f} minutes, or {elapsed_seconds/60/60:.1f} hours")
     print(f"Data saved to: {folder_path}")
     print("-------------------------")
+    is_running_experiment = False
 
 # Takes in event and values to check for radio selection (Pictures, Videos, or Preview)
 # Takes in CSV filename or location list generated from opening CSV file
@@ -796,6 +800,20 @@ def get_video(camera):
     print(f"Recorded Video: {filename}")
 
 
+def capture_still(camera, file_full_path):
+    """Safely capture a still by pausing preview and restoring resolution."""
+    with CAMERA_LOCK:
+        was_previewing = bool(camera.preview)
+        if was_previewing:
+            camera.stop_preview()
+        original_res = camera.resolution
+        camera.resolution = (PIC_WIDTH, PIC_HEIGHT)
+        camera.capture(file_full_path)
+        camera.resolution = original_res
+        if was_previewing:
+            camera.start_preview()
+
+
 def get_picture(camera):
     # TODO: Change variables here to Global to match changes in Camera Tab
     # Take a Picture, 12MP: 4056x3040
@@ -804,17 +822,10 @@ def get_picture(camera):
     unique_id = get_unique_id()
     pic_save_name = f"test_{unique_id}_{pic_width}x{pic_height}.jpg"
     
-    camera.resolution = (pic_width, pic_height)
-    # camera.resolution = (2592, 1944)
-    
     pic_save_full_path = f"{PIC_SAVE_FOLDER}/{pic_save_name}"
     
-    camera.capture(pic_save_full_path)
-    
+    capture_still(camera, pic_save_full_path)
     print(f"Saved Image: {pic_save_full_path}")
-    
-    # Return to streaming resolution: 640 x 480 (or it will crash)
-    camera.resolution = (VID_WIDTH, VID_HEIGHT)
     pass
 
 
@@ -826,30 +837,13 @@ def get_well_picture(camera, file_full_path):
     # unique_id = get_unique_id()
     # pic_save_name = f"well{well_number}_{unique_id}_{pic_width}x{pic_height}.jpg"
     
-    camera.resolution = (pic_width, pic_height)
-    # camera.resolution = (2592, 1944)
-    
-    # pic_save_full_path = f"{PIC_SAVE_FOLDER}/{pic_save_name}"
-    
-    camera.capture(file_full_path)
-    
+    capture_still(camera, file_full_path)
     print(f"Saved Image: {file_full_path}")
-    
-    # Return to streaming resolution: 640 x 480 (or it will crash)
-    camera.resolution = (VID_WIDTH, VID_HEIGHT)
     pass
 
 
 
 def get_x_pictures(x, delay_seconds, camera):
-    
-    # Set Camera Resolution
-    pic_width = PIC_WIDTH
-    pic_height = PIC_HEIGHT
-    camera.resolution = (pic_width, pic_height)
-    
-    # Stop Preview?
-    camera.stop_preview()
     
     # Run loop x times
     for i in range(x):
@@ -857,19 +851,17 @@ def get_x_pictures(x, delay_seconds, camera):
         # Create Unique ID
         unique_id = get_unique_id()
         # Create Save Name from Unique ID
-        pic_save_name = f"test_{unique_id}_{pic_width}x{pic_height}.jpg"
+        pic_save_name = f"test_{unique_id}_{PIC_WIDTH}x{PIC_HEIGHT}.jpg"
         # Create Full Save Path using Save Name and Save Folder
         pic_save_full_path = f"{PIC_SAVE_FOLDER}/{pic_save_name}"
         # Capture Image
-        camera.capture(pic_save_full_path)
+        capture_still(camera, pic_save_full_path)
         # Print that picture was saved
         print(f"Saved Image: {pic_save_full_path}")
         # Wait Delay Amount
         time.sleep(delay_seconds)
     
     print(f"Done taking {x} pictures.")
-    # Return Camera Resolution?
-    camera.resolution = (VID_WIDTH, VID_HEIGHT)
     
     pass
 
@@ -1698,11 +1690,13 @@ def main():
     # Initialize current_location_dictionary to X=0, Y=0, Z=0
     
     # Initialize folder_path_sample to "" ("Start Experiment" will create unique folder name)
+    # Throttle preview window polling to reduce CPU use
+    preview_check_interval = 0.2
+    last_preview_check = time.monotonic()
     # **** Note: This for loop may cause problems if the camera feed dies, it will close everything? ****
-    # for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
     while True:
-        event, values = window.read(timeout=0)
-        event_p, values_p = window_p.read(timeout=0)
+        event, values = window.read(timeout=20)
+        event_p, values_p = window_p.read(timeout=20)
         
         # Camera Preview Initial Startup
         # Setup if/else initial_startup condition
@@ -1726,26 +1720,21 @@ def main():
             # Change is_initial_startup to False
             is_initial_startup = False
         else:
-            # print(f"is_initial_startup: {is_initial_startup}")
-            # get location of Preview Window using PID
-            x_win_preview, y_win_preview = get_window_location_from_pid(preview_win_id)
-            # print(f"x_win_preview:{x_win_preview}, y_win_preview:{y_win_preview}")
-            # camera.start_preview(alpha=255, fullscreen=False, window=(x_win_preview, y_win_preview, 640, 480))
-            
-            # If previous camera preview x/y is different, update them and call camera.start_preview
-            # (Prevents flickering if camera is still)
-            # TODO: How to slow down flickering while moving preview window?
-            if PREVIOUS_CAMERA_PREVIEW_X != x_win_preview and PREVIOUS_CAMERA_PREVIEW_Y != y_win_preview:
-                PREVIOUS_CAMERA_PREVIEW_X = x_win_preview
-                PREVIOUS_CAMERA_PREVIEW_Y = y_win_preview
-            
-                if camera.preview:
-                    camera.start_preview(alpha=PREVIEW_ALPHA, fullscreen=False, window=(x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT))
+            now = time.monotonic()
+            if now - last_preview_check >= preview_check_interval:
+                last_preview_check = now
+                x_win_preview, y_win_preview = get_window_location_from_pid(preview_win_id)
+                if (PREVIOUS_CAMERA_PREVIEW_X != x_win_preview) or (PREVIOUS_CAMERA_PREVIEW_Y != y_win_preview):
+                    PREVIOUS_CAMERA_PREVIEW_X = x_win_preview
+                    PREVIOUS_CAMERA_PREVIEW_Y = y_win_preview
+                
+                    if camera.preview:
+                        camera.start_preview(alpha=PREVIEW_ALPHA, fullscreen=False, window=(x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT))
         
         # Check Input Text for integers only
         
-        for preview_key in PREVIEW_KEY_LIST:
-            check_for_digits_in_key(preview_key, window, event, values)
+        for numeric_key in NUMERIC_KEYS:
+            check_for_digits_in_key(numeric_key, window, event, values)
         
         # Call Get Current Location Manager Function
         # Print Current Location
@@ -1790,6 +1779,7 @@ def main():
             
             # Set is_running_experiment to True, we are now running an experiment
             is_running_experiment = True
+            thread_event.clear()
             
             # Uncomment to see your CSV File (is it the correct path?)
             # print("CSV File:", values[OPEN_CSV_FILEBROWSE_KEY])
@@ -1967,7 +1957,7 @@ def main():
 
         
         if event in WL.ALL_CROSS_HAIR_EVENTS:
-            WL.event_manager(event, values, window, camera)
+            WL.event_manager(event, values, window, camera, CAMERA_LOCK)
         
         # print("You entered ", values[0])
         

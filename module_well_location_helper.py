@@ -122,7 +122,7 @@ def update_line_thickness(values):
     pass
 
 
-def draw_on_image(camera):
+def draw_on_image(camera, camera_lock=None):
 
     # Temp image get
     # image = get_dummy_image()
@@ -130,7 +130,21 @@ def draw_on_image(camera):
     
     # Get image from camera
     # temp_filename = "temp.jpg"
-    camera.capture(temp_filename)
+    def _capture():
+        was_previewing = False
+        if hasattr(camera, "preview"):
+            was_previewing = bool(camera.preview)
+            if was_previewing:
+                camera.stop_preview()
+        camera.capture(temp_filename)
+        if was_previewing:
+            camera.start_preview()
+
+    if camera_lock:
+        with camera_lock:
+            _capture()
+    else:
+        _capture()
     image = cv2.imread(temp_filename)
     image_edit = image.copy()
 
@@ -150,7 +164,7 @@ def draw_on_image(camera):
 
     # Display Image
     cv2.imshow("Cross Hair Preview", image_edit)
-    cv2.waitKey(100)
+    cv2.waitKey(1)
     pass
 
 
@@ -192,7 +206,7 @@ def update_color(event, values, window):
     pass
 
 
-def event_manager(event, values, window, camera):
+def event_manager(event, values, window, camera, camera_lock=None):
     
     # if event in CIRCLE_EVENT_LIST:
     #     # print("Circle event detected")
@@ -223,7 +237,7 @@ def event_manager(event, values, window, camera):
     # So update line and circle value, then draw on the image.
     update_line_thickness(values)
     update_circle(event, values, window)
-    draw_on_image(camera)
+    draw_on_image(camera, camera_lock)
 
     # if values[PREVIEW_ON_KEY] == True:
     #     draw_on_image()
