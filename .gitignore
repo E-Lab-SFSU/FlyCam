@@ -14,3 +14,4 @@ testing/Well_Location/snake_path.csv
 
 # OS cruft
 .DS_Store
+testing/Well_Location/location_file.csv
