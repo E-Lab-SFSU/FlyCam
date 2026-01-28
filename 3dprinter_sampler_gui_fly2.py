@@ -1854,20 +1854,6 @@ def main():
         elif event == "Pic":
             print("You Pushed Pic Button")
             get_picture(camera)
-            # TODO: Change variables here to Global to match changes in Camera Tab
-            # Take a Picture, 12MP: 4056x3040
-            
-            """
-            # Display image with OpenCV (Keeps Crashing)
-            pic_capture = cv2.imread(pic_save_full_path, cv2.IMREAD_COLOR)
-            pic_resize = cv2.resize(pic_capture, MON_RES)
-            pic_window_tite = "pic_resize"
-            cv2.imshow(pic_window_tite, pic_resize)
-            print("Press 'q' to close picture")
-            key=cv2.waitKey(0)
-            if key == ord("q"):
-                cv2.destroyAllWindows()
-            
         elif event == "Pic x 10":
             print("Pic x 10")
             x = 10
@@ -2013,32 +1999,27 @@ def main():
                     writer.writerow([row[0], row[1], row[2], f"{z_override:.2f}"])
             print(f"Updated Z to {z_override:.2f} in {last_snake_csv}")
         elif event == START_PREVIEW:
-            
-            start_camera_preview(event, values, camera, preview_win_id)
-            """
             print("Starting Preview With Settings")
             if camera.preview:
                 camera.stop_preview()
-            prev_width = int(values[PREVIEW_WIDTH_KEY])
-            prev_height = int(values[PREVIEW_HEIGHT_KEY])
-            prev_loc_x = int(values[PREVIEW_LOC_X_KEY])
-            prev_loc_y = int(values[PREVIEW_LOC_Y_KEY])
-            alpha_val = int(values[ALPHA_KEY])
-            
-            # Update Global Variables so Pseudo Window has Control
-            PREVIEW_LOC_X = prev_loc_x
-            PREVIEW_LOC_Y = prev_loc_y
-            PREVIEW_WIDTH = prev_width
-            PREVIEW_HEIGHT = prev_height
-            PREVIEW_ALPHA = alpha_val
-            
-            # Move Pseudo Window to input location too
-            move_window_pid(preview_win_id, prev_loc_x, prev_loc_y - PREVIEW_WINDOW_OFFSET)
-            
-            camera.start_preview(alpha=alpha_val, fullscreen=False, window=(prev_loc_x, prev_loc_y, prev_width, prev_height))
-            
-            x_win, y_win = get_window_location_from_pid(preview_win_id)
-            print(f"x_win:{x_win}, y_win:{y_win}")
+            try:
+                prev_width = int(values[PREVIEW_WIDTH_KEY])
+                prev_height = int(values[PREVIEW_HEIGHT_KEY])
+                prev_loc_x = int(values[PREVIEW_LOC_X_KEY])
+                prev_loc_y = int(values[PREVIEW_LOC_Y_KEY])
+                alpha_val = int(values[ALPHA_KEY])
+            except (TypeError, ValueError):
+                print("Invalid preview settings")
+            else:
+                PREVIEW_LOC_X = prev_loc_x
+                PREVIEW_LOC_Y = prev_loc_y
+                PREVIEW_WIDTH = prev_width
+                PREVIEW_HEIGHT = prev_height
+                PREVIEW_ALPHA = alpha_val
+                move_window_pid(preview_win_id, prev_loc_x, prev_loc_y - PREVIEW_WINDOW_OFFSET)
+                camera.start_preview(alpha=alpha_val, fullscreen=False, window=(prev_loc_x, prev_loc_y, prev_width, prev_height))
+                x_win, y_win = get_window_location_from_pid(preview_win_id)
+                print(f"x_win:{x_win}, y_win:{y_win}")
         elif event == STOP_PREVIEW:
             print("Stopping Preview")
             camera.stop_preview()
