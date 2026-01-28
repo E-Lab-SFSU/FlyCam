@@ -1597,7 +1597,7 @@ def main():
 
     corner_layout = [
         [sg.Text("Rows/Cols:"), sg.Input("6", size=(4,1), key="--NUM_ROWS--"), sg.Input("8", size=(4,1), key="--NUM_COLS--"),
-         sg.Text("Z Override:"), sg.Input("", size=(6,1), key="--Z_OVERRIDE--")],
+         sg.Text("Z Override:"), sg.Input("", size=(6,1), key="--Z_OVERRIDE--"), sg.Button("Apply Z to CSV", key="--APPLY_Z--")],
         [sg.Text("Top-Left:"), sg.Input("", size=(20,1), key="--TL_COORD--"), sg.Button("Set TL", key="--SET_TL--")],
         [sg.Text("Top-Right:"), sg.Input("", size=(20,1), key="--TR_COORD--"), sg.Button("Set TR", key="--SET_TR--")],
         [sg.Text("Bottom-Left:"), sg.Input("", size=(20,1), key="--BL_COORD--"), sg.Button("Set BL", key="--SET_BL--")],
@@ -1692,6 +1692,7 @@ def main():
 
     crosshair_overlay = None
     corners = {"TL": None, "TR": None, "BL": None, "BR": None}
+    last_snake_csv = os.path.join(os.getcwd(), "testing", "Well_Location", "snake_path.csv")
 
     # Create window and show it without plot
     window = sg.Window("3D Printer GUI Test", layout, location=(640, 36))
@@ -1867,16 +1868,6 @@ def main():
             if key == ord("q"):
                 cv2.destroyAllWindows()
             
-            """
-            
-            #with PiBayerArray(camera) as stream:
-                # camera.capture(stream, 'jpeg', bayer=True)
-                # Demosaic data and write to output (just use stream.array if you
-                # want to skip the demosaic step)
-                # output = (stream.demosaic() >> 2).astype(np.uint8)
-                #with open('image.data', 'wb') as f:
-                    # output.tofile(f)
-                    # output.tofile(f)
         elif event == "Pic x 10":
             print("Pic x 10")
             x = 10
@@ -1893,17 +1884,6 @@ def main():
             print("===================================")
             print("You pressed Get Current Location!")
             get_current_location2()
-        """
-            printer.run_gcode("M114")
-            serial_string = printer.get_serial_data()
-            if GCL.does_location_exist_m114(serial_string) == True:
-                current_location_dictionary, is_location_found = GCL.parse_m114(serial_string)
-                print(current_location_dictionary)
-                # printer.printer.flush()
-            else:
-                print("Location Not Found, Try Again")
-                # printer.printer.flush()
-            """
         elif event in [X_PLUS, X_MINUS, Y_PLUS, Y_MINUS, Z_PLUS, Z_MINUS]:
             # If any of the direction buttons are pressed, move extruder
             #  in that direction using the increment radio amounts
@@ -1997,7 +1977,41 @@ def main():
             default_dir = os.path.join(os.getcwd(), "testing", "Well_Location")
             outfile = os.path.join(default_dir, "snake_path.csv")
             generate_snake_csv(corners, rows, cols, outfile, z_override=z_override)
+            last_snake_csv = outfile
             print(f"Snake path saved to {outfile}")
+        elif event == "--APPLY_Z--":
+            z_str = values.get("--Z_OVERRIDE--", "").strip()
+            if not len(z_str):
+                print("Enter a Z Override value first")
+                continue
+            try:
+                z_override = float(z_str)
+            except ValueError:
+                print("Z Override must be a number")
+                continue
+            # Rewrite last_snake_csv with new Z
+            if not os.path.isfile(last_snake_csv):
+                print("No snake_path.csv found yet; generate first.")
+                continue
+            # Reload corners/rows/cols from existing file length
+            import csv
+            with open(last_snake_csv, newline="") as f:
+                reader = csv.reader(f)
+                rows_list = list(reader)
+            if len(rows_list) < 2:
+                print("Existing snake file is empty.")
+                continue
+            total_points = len(rows_list) - 1
+            # Determine rows/cols from inputs or infer nothing; just rewrite Z
+            # Simply rewrite the file with same XY, new Z
+            with open(last_snake_csv, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["image#", "Xcoord", "Ycoord", "Zcoord"])
+                for row in rows_list[1:]:
+                    if len(row) < 4:
+                        continue
+                    writer.writerow([row[0], row[1], row[2], f"{z_override:.2f}"])
+            print(f"Updated Z to {z_override:.2f} in {last_snake_csv}")
         elif event == START_PREVIEW:
             
             start_camera_preview(event, values, camera, preview_win_id)
@@ -2025,8 +2039,6 @@ def main():
             
             x_win, y_win = get_window_location_from_pid(preview_win_id)
             print(f"x_win:{x_win}, y_win:{y_win}")
-            """
-            
         elif event == STOP_PREVIEW:
             print("Stopping Preview")
             camera.stop_preview()
