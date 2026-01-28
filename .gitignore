@@ -7,6 +7,10 @@ __pycache__/
 *.jpeg
 *.png
 *.bmp
+scrap_images/
+Code_Pictures_*/
+testing/Well_Location/location_file_snake_*.csv
+testing/Well_Location/snake_path.csv
 
 # OS cruft
 .DS_Store
