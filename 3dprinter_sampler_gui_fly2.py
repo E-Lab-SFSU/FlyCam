@@ -1571,13 +1571,17 @@ def main():
     # TODO: Create User Input for number of Trials (use placeholder)
     time_layout = ET.get_time_layout()
     tab_1_layout = [
-        [sg.Text(OPEN_CSV_PROMPT), sg.Input(default_text=os.path.join(os.getcwd(),"testing","Well_Location")), sg.FileBrowse(initial_folder=os.path.join(os.getcwd(),"testing","Well_Location"), key=OPEN_CSV_FILEBROWSE_KEY)],
+        [sg.Text(OPEN_CSV_PROMPT),
+         sg.Input(default_text=os.path.join(os.getcwd(), "testing", "Well_Location", "snake_path.csv")),
+         sg.FileBrowse(initial_folder=os.path.join(os.getcwd(),"testing","Well_Location"), key=OPEN_CSV_FILEBROWSE_KEY)],
         *time_layout,
         [sg.Text(EXP_RADIO_PROMPT)],
         [sg.Radio(EXP_RADIO_PIC_TEXT, EXP_RADIO_GROUP, default=False, key=EXP_RADIO_PIC_KEY),
          sg.Radio(EXP_RADIO_VID_TEXT, EXP_RADIO_GROUP, default=False, key=EXP_RADIO_VID_KEY),
          sg.Radio(EXP_RADIO_PREVIEW_TEXT, EXP_RADIO_GROUP, default=True, key=EXP_RADIO_PREVIEW_KEY)],
-        [sg.Text("Save Images to Folder:"), sg.In(size=(25, 1), enable_events=True, key=PIC_SAVE_FOLDER_KEY), sg.FolderBrowse()],
+        [sg.Text("Save Images to Folder:"),
+         sg.In(default_text="/media/pi/Seagate Portable Drive", size=(25, 1), enable_events=True, key=PIC_SAVE_FOLDER_KEY),
+         sg.FolderBrowse(initial_folder="/media/pi/Seagate Portable Drive")],
         [sg.Button(START_EXPERIMENT, disabled=True), sg.Button(PAUSE_EXPERIMENT, disabled=True),
          sg.Button(RESUME_EXPERIMENT, disabled=True), sg.Button(STOP_EXPERIMENT, disabled=True)]
     ]
