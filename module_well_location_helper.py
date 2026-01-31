@@ -18,6 +18,7 @@ Changelog:
 """
 import cv2
 import FreeSimpleGUI as sg
+import numpy as np
 
 from os import remove
 from os.path import join
@@ -47,7 +48,11 @@ RAD_MINUS_ONE = "-RAD MINUS_ONE-"
 RAD_PLUS_ONE = "-RAD PLUS ONE-"
 RAD_PLUS_TEN = "-RAD PLUS TEN-"
 
-CIRCLE_EVENT_LIST = [RAD_MINUS_TEN, RAD_MINUS_ONE, RAD_PLUS_ONE, RAD_PLUS_TEN]
+COARSE_STEP = 1
+CIRCLE_EVENT_LIST = [RAD_MINUS_ONE, RAD_PLUS_ONE]
+
+# Crosshair preview display size (width, height)
+CROSSHAIR_PREVIEW_RES = (640, 480)
 
 # Line Events and Default Value
 LINE_THICKNESS_KEY = "-=LINE THICKNESS KEY=-"
@@ -67,6 +72,9 @@ ALL_CROSS_HAIR_EVENTS = [LOAD_IMAGE, RAD_MINUS_TEN, RAD_MINUS_ONE, RAD_PLUS_ONE,
 # Camera Hacks, capture to a temp file to quick loading
 # TODO: Capture image to byte
 temp_filename = "temp.jpg"
+
+# Overlay defaults
+CROSSHAIR_PREVIEW_RES = (640, 480)
 
 
 def get_dummy_image():
@@ -95,14 +103,10 @@ def update_circle(event, values, window):
     if event == LOAD_IMAGE:
         CIRCLE_RADIUS = int(values[RAD_KEY])
 
-    if event == RAD_MINUS_TEN:
-        CIRCLE_RADIUS -= 10
-    elif event == RAD_MINUS_ONE:
+    if event == RAD_MINUS_ONE:
         CIRCLE_RADIUS -= 1
     elif event == RAD_PLUS_ONE:
         CIRCLE_RADIUS += 1
-    elif event == RAD_PLUS_TEN:
-        CIRCLE_RADIUS += 10
 
     # Update Circle Thickness
     circle_thick_number = int(values[CIRCLE_THICKNESS_KEY])
@@ -122,35 +126,9 @@ def update_line_thickness(values):
     pass
 
 
-def draw_on_image(camera):
+def draw_on_image(camera, camera_lock=None):
 
-    # Temp image get
-    # image = get_dummy_image()
-    # image_edit = image.copy()
-    
-    # Get image from camera
-    # temp_filename = "temp.jpg"
-    camera.capture(temp_filename)
-    image = cv2.imread(temp_filename)
-    image_edit = image.copy()
-
-    # Get dimensions of image
-    # print(image.shape)
-    height, width, ch = image.shape
-    # Get center x, center y.
-    center_x = int(width / 2)
-    center_y = int(height / 2)
-    # print(f"Center: {center_x, center_y}")
-
-    image_edit = draw_cross_hairs(image)
-
-    # On copy, Draw circle at center x/y with radius
-    center_coordinates = (center_x, center_y)
-    image_edit = cv2.circle(image_edit, center_coordinates, CIRCLE_RADIUS, CIRCLE_COLOR, CIRCLE_THICKNESS)
-
-    # Display Image
-    cv2.imshow("Cross Hair Preview", image_edit)
-    cv2.waitKey(100)
+    # Deprecated: overlay now handled via create_crosshair_overlay in GUI.
     pass
 
 
@@ -179,6 +157,48 @@ def draw_cross_hairs(image):
     return image_edit
 
 
+def create_crosshair_overlay(camera, radius, thickness, color_bgr, alpha, preview_window, camera_lock=None, existing_overlay=None):
+    """
+    Draw crosshair into an RGBA buffer and add/update a PiCamera overlay.
+    preview_window: (x, y, w, h) matches camera preview window.
+    Returns the overlay object.
+    """
+    x, y, w, h = preview_window
+    # PiCamera overlay requires width multiple of 32, height multiple of 16
+    w_pad = int((w + 31) // 32 * 32)
+    h_pad = int((h + 15) // 16 * 16)
+
+    # Build a single-channel mask, then set RGB manually to avoid channel order confusion
+    mask = np.zeros((h_pad, w_pad), dtype=np.uint8)
+
+    center_x = w // 2
+    center_y = h // 2
+
+    cv2.line(mask, (0, center_y), (w, center_y), 255, thickness, lineType=cv2.LINE_8)
+    cv2.line(mask, (center_x, 0), (center_x, h), 255, thickness, lineType=cv2.LINE_8)
+    cv2.circle(mask, (center_x, center_y), radius, 255, thickness, lineType=cv2.LINE_8)
+
+    r, g, b = color_bgr[::-1]  # convert BGR to RGB
+    overlay_img = np.zeros((h_pad, w_pad, 4), dtype=np.uint8)
+    overlay_img[..., 0][mask == 255] = r
+    overlay_img[..., 1][mask == 255] = g
+    overlay_img[..., 2][mask == 255] = b
+    overlay_img[..., 3][mask == 255] = alpha
+
+    buf = overlay_img.tobytes()
+
+    def _apply():
+        if existing_overlay:
+            camera.remove_overlay(existing_overlay)
+        return camera.add_overlay(buf, size=(w_pad, h_pad), layer=3, alpha=alpha, fullscreen=False, window=(x, y, w, h), format='rgba')
+
+    if camera_lock:
+        with camera_lock:
+            return _apply()
+    else:
+        return _apply()
+
+
 def update_color(event, values, window):
     global CIRCLE_COLOR
     # print("Updating Circle and Line Colors")
@@ -192,30 +212,8 @@ def update_color(event, values, window):
     pass
 
 
-def event_manager(event, values, window, camera):
+def event_manager(event, values, window, camera, camera_lock=None):
     
-    # if event in CIRCLE_EVENT_LIST:
-    #     # print("Circle event detected")
-    #     # update_circle(event, values, window, camera)
-    #     update_line_thickness(values)
-    #     update_circle(event, values, window)
-    #
-    # if event == LOAD_IMAGE:
-    #     # print(f"Pressed: {LOAD_IMAGE}")
-    #
-    #     # Update Line Thickness
-    #     update_line_thickness(values)
-    #
-    #     update_circle(event, values, window)
-    #
-    #     # Preview On/Off Test
-    #     # window[PREVIEW_ON_KEY].update(True)
-    #     # draw_on_image()
-
-    # if event in CIRCLE_EVENT_LIST or event == LOAD_IMAGE:
-    #     update_line_thickness(values)
-    #     update_circle(event, values, window)
-
     if event == COLOR_CHOOSER_KEY:
         update_color(event, values, window)
 
@@ -223,7 +221,7 @@ def event_manager(event, values, window, camera):
     # So update line and circle value, then draw on the image.
     update_line_thickness(values)
     update_circle(event, values, window)
-    draw_on_image(camera)
+    draw_on_image(camera, camera_lock)
 
     # if values[PREVIEW_ON_KEY] == True:
     #     draw_on_image()

@@ -69,6 +69,8 @@ import prepare_experiment as P
 import module_get_cam_settings as GCS
 import module_experiment_timer as ET
 import module_well_location_helper as WL
+import module_well_location_calculator as WLC
+from module_snake_path import generate_snake_csv
 
 
 easy_rot = 180 #global variable for camera rotation, moved for access
@@ -80,6 +82,8 @@ OPEN_CSV_PROMPT = "Open CSV:"
 OPEN_CSV_FILEBROWSE_KEY = "-CSV_INPUT-"
 START_EXPERIMENT = "Start Experiment"
 STOP_EXPERIMENT = "Stop Experiment"
+PAUSE_EXPERIMENT = "Pause"
+RESUME_EXPERIMENT = "Resume"
 MAX_NUMBER_EXPERIMENTAL_RUNS = 1
 
 # ---- RADIO GUI KEYS AND TEXT ----
@@ -90,7 +94,7 @@ EXP_RADIO_GROUP = "RADIO_EXP"
 EXP_RADIO_PIC_TEXT = "Picture"
 EXP_RADIO_VID_TEXT = "Video"
 EXP_RADIO_PREVIEW_TEXT = "Preview"
-EXP_RADIO_PROMPT = "For the experiment, choose to take Pictures, Videos, or Preview Only"
+EXP_RADIO_PROMPT = "Experiment mode"
 
 # ---- CAMERA TAB ----
 # CONSTANTS
@@ -210,6 +214,29 @@ EXPO_SETTLE_TIME_KEY = "-EXPO SETTLE TIME-"
 SET_EXPOSURE_MODE = "Set Expo"
 
 is_running_experiment = False
+# Camera access lock to avoid preview/still races
+CAMERA_LOCK = threading.Lock()
+
+# Numeric-only inputs to guard
+NUMERIC_KEYS = [
+    "-ROTATION_INPUT-",
+    "-PIC_WIDTH_INPUT-",
+    "-PIC_HEIGHT_INPUT-",
+    "-PREVIEW LOC X KEY-",
+    "-PREVIEW LOC Y KEY-",
+    "-PREVIEW WIDTH KEY-",
+    "-PREVIEW HEIGHT KEY-",
+    "-ALPHA KEY-",
+    "-EXPO SETTLE TIME-",
+]
+
+# Small-slice sleep so Stop is responsive
+def sleep_with_stop(total_seconds, stop_event, chunk=0.25):
+    elapsed = 0.0
+    while elapsed < total_seconds and not stop_event.is_set():
+        wait = min(chunk, total_seconds - elapsed)
+        time.sleep(wait)
+        elapsed += wait
 
 # ==== USER DEFINED FUNCTIONS =====
 
@@ -319,37 +346,32 @@ def run_experiment(event, values, thread_event, camera, preview_win_id):
     # Go into Absolute Positioning Mode
     printer.run_gcode(C.ABSOLUTE_POS)
     
+    folder_path = None
     # Create New Folder If not in "Preview" Mode
     if values[EXP_RADIO_PREVIEW_KEY] == False:
         folder_path = P.create_and_get_folder_path()
         print("Not in Preview Mode, creating folder:", folder_path)
-        
-    # Get Camera Settings Module
-    # Initialize unique CSV camera settings file
-    GCS.SAVE_CSV_FOLDER = folder_path
-    GCS.init_csv_file()
+        # Initialize unique CSV camera settings file
+        GCS.SAVE_CSV_FOLDER = folder_path
+        GCS.init_csv_file()
     
     # Create While loop to check if thread_event is not set (closing)
     count_run = 0
-    # while not thread_event.isSet():
-    # while True:
-    while is_running_experiment:
+    while not thread_event.is_set():
         
         # TODO: Put in the rest of the code for Pic, Video, Preview from 3dprinter_start_experiment or prepare_experiment
         print("=========================")
         print("Run #", count_run)
         
         well_number = 1
-        printer.run_gcode(location)
-        print("start of 10 sec wait")
-        time.sleep(10)
-        print("10 sec wait over")
+        sleep_with_stop(10, thread_event)
         
         for location in gcode_string_list:
-            # print(gcode_string)
+            if thread_event.is_set():
+                break
             printer.run_gcode(location)
             print("Going to Well Number:", well_number)
-            time.sleep(4)
+            sleep_with_stop(4, thread_event)
             if values[EXP_RADIO_PREVIEW_KEY] == True:
                 print("Preview Mode is On, only showing preview camera \n")
                 # camera.start_preview(fullscreen=False, window=(30, 30, 500, 500))
@@ -358,30 +380,16 @@ def run_experiment(event, values, thread_event, camera, preview_win_id):
                 # camera.stop_preview()
             elif values[EXP_RADIO_VID_KEY] == True:
                 print("Recording Video Footage")
-                file_full_path = P.get_file_full_path(folder_path, well_number)
+                if folder_path:
+                    file_full_path = P.get_file_full_path(folder_path, well_number)
                 # TODO: Change to Video Captures
-                # camera.capture(file_full_path)
             elif values[EXP_RADIO_PIC_KEY] == True:
                 print("Taking Pictures Only")
-                file_full_path = P.get_file_full_path(folder_path, well_number)
-                # print(file_full_path)
-                
-                # Change Image Capture Resolution
-                # pic_width = PIC_WIDTH
-                # pic_height = PIC_HEIGHT
-                
-                #camera.stop_preview()
-                #camera.resolution = (pic_width, pic_height)
-                # time.sleep(.1)
-                #camera.capture(file_full_path)
-                # camera.start_preview()
-                #start_camera_preview(event, values, camera, preview_win_id)
-                
-                
-                get_well_picture(camera, file_full_path)
-                
-                data_row = GCS.gen_cam_data(file_full_path, camera)
-                GCS.append_to_csv_file(data_row)
+                if folder_path:
+                    file_full_path = P.get_file_full_path(folder_path, well_number, total_wells=len(gcode_string_list))
+                    get_well_picture(camera, file_full_path)
+                    data_row = GCS.gen_cam_data(file_full_path, camera)
+                    GCS.append_to_csv_file(data_row)
                 
                 # Return to streaming resolution: 640 x 480 (or it will crash)
                 # Bug: Crashes anyway because of threading
@@ -409,9 +417,11 @@ def run_experiment(event, values, thread_event, camera, preview_win_id):
     print("=========================")
     print("Experiment Stopped")
     print("=========================")
+    global is_running_experiment
+    is_running_experiment = False
 
 
-def run_experiment2(event, values, thread_event, camera, preview_win_id):
+def run_experiment2(event, values, thread_event, pause_event, camera, preview_win_id):
     """
     Description: Runs experiment to take a picture, video, or preview (do nothing)
     
@@ -451,23 +461,21 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
     # Go into Absolute Positioning Mode
     printer.run_gcode(C.ABSOLUTE_POS)
     
+    folder_path = None
     # Create New Folder If not in "Preview" Mode
     if values[EXP_RADIO_PREVIEW_KEY] == False:
         dest_folder = PIC_SAVE_FOLDER
-        # folder_path = P.create_and_get_folder_path(dest_folder)
         folder_path = P.create_and_get_folder_path2(dest_folder)
         print("Not in Preview Mode, creating folder:", folder_path)
-        
-    # Get Camera Settings Module
-    # Initialize unique CSV camera settings file
-    GCS.SAVE_CSV_FOLDER = folder_path
-    GCS.init_csv_file()
+        GCS.SAVE_CSV_FOLDER = folder_path
+        GCS.init_csv_file()
     
     # Create While loop to check if thread_event is not set (closing)
     count_run = 0
-    # while not thread_event.isSet():
-    # while True:
-    while is_running_experiment:
+    while not thread_event.is_set():
+        # Honor pause requests
+        while pause_event.is_set() and not thread_event.is_set():
+            time.sleep(0.1)
         
         # TODO: Put in the rest of the code for Pic, Video, Preview from 3dprinter_start_experiment or prepare_experiment
         
@@ -480,15 +488,19 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
             well_number = 1
             
             for location in gcode_string_list:
-                # print(gcode_string)
+                # Respect pause while iterating wells
+                while pause_event.is_set() and not thread_event.is_set():
+                    time.sleep(0.1)
+                if thread_event.is_set():
+                    break
                 printer.run_gcode(location)
                 print("Going to Well Number:", well_number)
                 if well_number == 1:
                     print(f"Pausing at well {well_number} for 10 seconds")
-                    time.sleep(10)
+                    sleep_with_stop(10, thread_event)
                     print("pause is complete")
                 else:
-                    time.sleep(4)
+                    sleep_with_stop(4, thread_event)
                 if values[EXP_RADIO_PREVIEW_KEY] == True:
                     print("Preview Mode is On, only showing preview camera \n")
                     # camera.start_preview(fullscreen=False, window=(30, 30, 500, 500))
@@ -497,12 +509,14 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
                     # camera.stop_preview()
                 elif values[EXP_RADIO_VID_KEY] == True:
                     print("Recording Video Footage")
-                    file_full_path = P.get_file_full_path(folder_path, well_number)
+                    if folder_path:
+                        file_full_path = P.get_file_full_path(folder_path, well_number, total_wells=len(gcode_string_list))
                     # TODO: Change to Video Captures
                     # camera.capture(file_full_path)ffd4
                 elif values[EXP_RADIO_PIC_KEY] == True:
                     print("Taking Pictures Only")
-                    file_full_path = P.get_file_full_path(folder_path, well_number)
+                    if folder_path:
+                        file_full_path = P.get_file_full_path(folder_path, well_number, total_wells=len(gcode_string_list))
                     # print(file_full_path)
                     
                     # Change Image Capture Resolution
@@ -516,11 +530,10 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
                     # camera.start_preview()
                     #start_camera_preview(event, values, camera, preview_win_id)
                     
-                    
-                    get_well_picture(camera, file_full_path)
-                    
-                    data_row = GCS.gen_cam_data(file_full_path, camera)
-                    GCS.append_to_csv_file(data_row)
+                    if folder_path:
+                        get_well_picture(camera, file_full_path)
+                        data_row = GCS.gen_cam_data(file_full_path, camera)
+                        GCS.append_to_csv_file(data_row)
                     
                     # Return to streaming resolution: 640 x 480 (or it will crash)
                     # Bug: Crashes anyway because of threading
@@ -580,6 +593,7 @@ def run_experiment2(event, values, thread_event, camera, preview_win_id):
     print(f"Ran experiment for {elapsed_seconds:.1f} seconds, or {elapsed_seconds/60:.1f} minutes, or {elapsed_seconds/60/60:.1f} hours")
     print(f"Data saved to: {folder_path}")
     print("-------------------------")
+    is_running_experiment = False
 
 # Takes in event and values to check for radio selection (Pictures, Videos, or Preview)
 # Takes in CSV filename or location list generated from opening CSV file
@@ -796,6 +810,20 @@ def get_video(camera):
     print(f"Recorded Video: {filename}")
 
 
+def capture_still(camera, file_full_path):
+    """Safely capture a still by pausing preview and restoring resolution."""
+    with CAMERA_LOCK:
+        was_previewing = bool(camera.preview)
+        if was_previewing:
+            camera.stop_preview()
+        original_res = camera.resolution
+        camera.resolution = (PIC_WIDTH, PIC_HEIGHT)
+        camera.capture(file_full_path)
+        camera.resolution = original_res
+        if was_previewing:
+            camera.start_preview()
+
+
 def get_picture(camera):
     # TODO: Change variables here to Global to match changes in Camera Tab
     # Take a Picture, 12MP: 4056x3040
@@ -804,17 +832,10 @@ def get_picture(camera):
     unique_id = get_unique_id()
     pic_save_name = f"test_{unique_id}_{pic_width}x{pic_height}.jpg"
     
-    camera.resolution = (pic_width, pic_height)
-    # camera.resolution = (2592, 1944)
-    
     pic_save_full_path = f"{PIC_SAVE_FOLDER}/{pic_save_name}"
     
-    camera.capture(pic_save_full_path)
-    
+    capture_still(camera, pic_save_full_path)
     print(f"Saved Image: {pic_save_full_path}")
-    
-    # Return to streaming resolution: 640 x 480 (or it will crash)
-    camera.resolution = (VID_WIDTH, VID_HEIGHT)
     pass
 
 
@@ -826,30 +847,13 @@ def get_well_picture(camera, file_full_path):
     # unique_id = get_unique_id()
     # pic_save_name = f"well{well_number}_{unique_id}_{pic_width}x{pic_height}.jpg"
     
-    camera.resolution = (pic_width, pic_height)
-    # camera.resolution = (2592, 1944)
-    
-    # pic_save_full_path = f"{PIC_SAVE_FOLDER}/{pic_save_name}"
-    
-    camera.capture(file_full_path)
-    
+    capture_still(camera, file_full_path)
     print(f"Saved Image: {file_full_path}")
-    
-    # Return to streaming resolution: 640 x 480 (or it will crash)
-    camera.resolution = (VID_WIDTH, VID_HEIGHT)
     pass
 
 
 
 def get_x_pictures(x, delay_seconds, camera):
-    
-    # Set Camera Resolution
-    pic_width = PIC_WIDTH
-    pic_height = PIC_HEIGHT
-    camera.resolution = (pic_width, pic_height)
-    
-    # Stop Preview?
-    camera.stop_preview()
     
     # Run loop x times
     for i in range(x):
@@ -857,19 +861,17 @@ def get_x_pictures(x, delay_seconds, camera):
         # Create Unique ID
         unique_id = get_unique_id()
         # Create Save Name from Unique ID
-        pic_save_name = f"test_{unique_id}_{pic_width}x{pic_height}.jpg"
+        pic_save_name = f"test_{unique_id}_{PIC_WIDTH}x{PIC_HEIGHT}.jpg"
         # Create Full Save Path using Save Name and Save Folder
         pic_save_full_path = f"{PIC_SAVE_FOLDER}/{pic_save_name}"
         # Capture Image
-        camera.capture(pic_save_full_path)
+        capture_still(camera, pic_save_full_path)
         # Print that picture was saved
         print(f"Saved Image: {pic_save_full_path}")
         # Wait Delay Amount
         time.sleep(delay_seconds)
     
     print(f"Done taking {x} pictures.")
-    # Return Camera Resolution?
-    camera.resolution = (VID_WIDTH, VID_HEIGHT)
     
     pass
 
@@ -1189,32 +1191,30 @@ def get_window_location_from_pid(search_pid):
     # print("get_window_location_from_pid")
     # print(f"search_pid: {search_pid}")
     
-    disp = Display()
-    root = disp.screen().root
-    children = root.query_tree().children
-    
-    x_win, y_win = 0, 0
-    
-    for win in children:
-        winName = win.get_wm_name()
-        pid = win.id
-        x, y, width, height = get_absolute_geometry(win, root)
+    try:
+        disp = Display()
+        root = disp.screen().root
+        children = root.query_tree().children
         
-        if pid == search_pid:
-            """
-            print("======Children=======")
-            print(f"winName: {winName}, pid: {pid}")
-            print(f"x:{x}, y:{y}, width:{width}, height:{height}")
-            """
+        x_win, y_win = 0, 0
+        
+        for win in children:
+            try:
+                winName = win.get_wm_name()
+            except Exception:
+                continue
+            pid = win.id
+            x, y, width, height = get_absolute_geometry(win, root)
             
-            x_win = x
-            y_win = y
-            
-            break
-    
-    # print(f"x_win:{x_win}, y_win:{y_win}")
-    return x_win, y_win
-    disp.close()
+            if pid == search_pid:
+                x_win = x
+                y_win = y
+                break
+        disp.close()
+        return x_win, y_win
+    except Exception:
+        # If window vanished or X error, return default
+        return PREVIEW_LOC_X, PREVIEW_LOC_Y
 
 
 def move_window_pid(search_pid, x_new, y_new):
@@ -1544,13 +1544,9 @@ def main():
         print(f"Folder does not exist, making directory: {TEMP_FOLDER}")
 
     # Make newline be blank, prevents extra empty lines from happening
-    f = open(TEMP_FULL_PATH, 'w', newline="")
-    writer = csv.writer(f)
-
-    # Create headers
-    headers = ["X", "Y", "Z"]
-    writer.writerow(headers)
-    f.close()
+    with open(TEMP_FULL_PATH, 'w', newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["X", "Y", "Z"])
     
     # === Camera Preview Startup ===
     global PREVIOUS_CAMERA_PREVIEW_X, PREVIOUS_CAMERA_PREVIEW_Y
@@ -1580,17 +1576,44 @@ def main():
     # TODO: Create 3 Radio Buttons for Picture, Video, Preview (Default), and Prompt "Choose to take Pictures, Video, or only preview locations"
     # TODO: Create User Input for number of Trials (use placeholder)
     time_layout = ET.get_time_layout()
-    tab_1_layout = [ [sg.Text(OPEN_CSV_PROMPT), sg.Input(), sg.FileBrowse(key=OPEN_CSV_FILEBROWSE_KEY)],
-                     time_layout[0], time_layout[1], time_layout[2], time_layout[3], time_layout[4],
-                     [sg.Text(EXP_RADIO_PROMPT)],
-                     [sg.Radio(EXP_RADIO_PIC_TEXT, EXP_RADIO_GROUP, default=False, key=EXP_RADIO_PIC_KEY),
-                        sg.Radio(EXP_RADIO_VID_TEXT, EXP_RADIO_GROUP, default=False, key=EXP_RADIO_VID_KEY),
-                        sg.Radio(EXP_RADIO_PREVIEW_TEXT, EXP_RADIO_GROUP, default=True, key=EXP_RADIO_PREVIEW_KEY)],
-                     [sg.Button(START_EXPERIMENT, disabled=True), sg.Button(STOP_EXPERIMENT, disabled=True)]
-                   ]
+    tab_1_layout = [
+        [sg.Text(OPEN_CSV_PROMPT),
+         sg.Input(default_text=os.path.join(os.getcwd(), "testing", "Well_Location", "snake_path.csv"),
+                  key=OPEN_CSV_FILEBROWSE_KEY, size=(45,1)),
+         sg.FileBrowse(initial_folder=os.path.join(os.getcwd(),"testing","Well_Location"),
+                       target=OPEN_CSV_FILEBROWSE_KEY)],
+        *time_layout,
+        [sg.Text(EXP_RADIO_PROMPT)],
+        [sg.Radio(EXP_RADIO_PIC_TEXT, EXP_RADIO_GROUP, default=True, key=EXP_RADIO_PIC_KEY),
+         sg.Radio(EXP_RADIO_VID_TEXT, EXP_RADIO_GROUP, default=False, key=EXP_RADIO_VID_KEY),
+         sg.Radio(EXP_RADIO_PREVIEW_TEXT, EXP_RADIO_GROUP, default=False, key=EXP_RADIO_PREVIEW_KEY)],
+        [sg.Text("Save Images to Folder:"),
+         sg.In(default_text="/media/pi/Seagate Portable Drive", size=(25, 1), enable_events=True, key=PIC_SAVE_FOLDER_KEY),
+         sg.FolderBrowse(initial_folder="/media/pi/Seagate Portable Drive")],
+        [sg.Button(START_EXPERIMENT, disabled=True), sg.Button(PAUSE_EXPERIMENT, disabled=True),
+         sg.Button(RESUME_EXPERIMENT, disabled=True), sg.Button(STOP_EXPERIMENT, disabled=True)]
+    ]
     
-    # Tab 2: Movement Tab
-    tab_2_layout = [ [sg.Text("", size=(3, 1)), sg.Button("Get Current Location", size=(20, 1)), sg.Button(SAVE_LOC_BUTTON)],
+    # Tab 2: Movement Tab + Crosshair overlay + Corner capture
+    crosshair_layout = [
+        [sg.Checkbox("Show Crosshair Overlay", key="--XHAIR_ON--", default=True)],
+        [sg.Button("-1", key="--XHAIR_DEC--", size=(4, 1)),
+         sg.Text("Radius (px):"),
+         sg.InputText("100", size=(5, 1), key="--XHAIR_RADIUS--", enable_events=True),
+         sg.Button("+1", key="--XHAIR_INC--", size=(4, 1))]
+    ]
+
+    corner_layout = [
+        [sg.Text("Rows/Cols:"), sg.Input("6", size=(4,1), key="--NUM_ROWS--"), sg.Input("8", size=(4,1), key="--NUM_COLS--"),
+         sg.Text("Z Override:"), sg.Input("", size=(6,1), key="--Z_OVERRIDE--"), sg.Button("Apply Z to CSV", key="--APPLY_Z--")],
+        [sg.Text("Top-Left:"), sg.Input("", size=(20,1), key="--TL_COORD--"), sg.Button("Set TL", key="--SET_TL--")],
+        [sg.Text("Top-Right:"), sg.Input("", size=(20,1), key="--TR_COORD--"), sg.Button("Set TR", key="--SET_TR--")],
+        [sg.Text("Bottom-Left:"), sg.Input("", size=(20,1), key="--BL_COORD--"), sg.Button("Set BL", key="--SET_BL--")],
+        [sg.Text("Bottom-Right:"), sg.Input("", size=(20,1), key="--BR_COORD--"), sg.Button("Set BR", key="--SET_BR--")],
+        [sg.Button("Generate Snake CSV", key="--GEN_SNAKE--")]
+    ]
+
+    tab_2_layout = [ [sg.Text("", size=(3, 1)), sg.Button("Get Current Location", size=(20, 1)), sg.Button("Change Plate", key="--CHANGE_PLATE--", size=(12,1)), sg.Button(SAVE_LOC_BUTTON)],
                      [sg.Radio(RELATIVE_TENTH_TEXT, RADIO_GROUP, default=False, key=RELATIVE_TENTH_KEY),
                         sg.Radio(RELATIVE_ONE_TEXT, RADIO_GROUP, default=True, key=RELATIVE_ONE_KEY),
                         sg.Radio(RELATIVE_TEN_TEXT, RADIO_GROUP, default=False, key=RELATIVE_TEN_KEY)
@@ -1598,27 +1621,32 @@ def main():
                      [sg.Text("", size=(5, 1)), sg.Button(Y_PLUS, size=(10, 1)), sg.Text("", size=(5, 1)), sg.Button(Z_MINUS, size=(5, 1))],
                      [sg.Button(X_MINUS, size=(10, 1)), sg.Button(X_PLUS, size=(10, 1))],
                      [sg.Text("", size=(5, 1)), sg.Button(Y_MINUS, size=(10, 1)), sg.Text("", size=(5, 1)), sg.Button(Z_PLUS, size=(5, 1))],
-                     [sg.HorizontalSeparator()],
                      [sg.Text("Input GCODE (e.g. G0X0Y50):")],
-                     [sg.InputText(size=(30, 1), key="-GCODE_INPUT-"), sg.Button("Run", size=(5, 1)), sg.Button("Clear", size=(5, 1))]
+                     [sg.InputText(size=(30, 1), key="-GCODE_INPUT-"), sg.Button("Run", size=(5, 1)), sg.Button("Clear", size=(5, 1))],
+                     [sg.HorizontalSeparator()],
+                     [sg.Frame("Crosshair", crosshair_layout)],
+                     [sg.Frame("Corners (csv coords)", corner_layout)]
                    ]
     
     # Setup Tab/GUI Layout
-    # Camera Rotation: []
-    # Set Still Picture Resolution (Actually changes the constant variables)
-    # Width
-    # Height
-    # Set Camera Settings Button
-    # TODO: Change default Camera Rotation to settings file if it exists.
-    tab_3_layout = [ [sg.Text("Camera Rotation (in Degrees):"), sg.InputText("180", size=(10, 1), enable_events=True, key=CAMERA_ROTATION_KEY)],
-                     [sg.Text("Set Image Capture Resolution:")],
-                     [sg.Text("Pic Width (in pixels):"), sg.InputText(PIC_WIDTH, size=(10, 1), enable_events=True, key=PIC_WIDTH_KEY)],
-                     [sg.Text("Pic Height (in pixels):"),sg.InputText(PIC_HEIGHT, size=(10, 1), enable_events=True, key=PIC_HEIGHT_KEY)],
-                     [sg.Button(UPDATE_CAMERA_TEXT)],
-                     [sg.Text("Save Images to Folder:"), sg.In(size=(25,1), enable_events=True, key=PIC_SAVE_FOLDER_KEY), sg.FolderBrowse()],
-                     [sg.Text("Exposure Mode:"),sg.InputText(EXPOSURE_MODE, size=(10, 1), enable_events=True, key=EXPOSURE_MODE_KEY),
-                      sg.Text("Expo Settle Time (in sec):"), sg.InputText(EXPO_SETTLE_TIME, size=(5, 1),key=EXPO_SETTLE_TIME_KEY), sg.Button(SET_EXPOSURE_MODE)]
-                   ]
+    tab_3_layout = [
+        [sg.Text("Camera Rotation (in Degrees):"), sg.InputText("180", size=(10, 1), enable_events=True, key=CAMERA_ROTATION_KEY)],
+        [sg.Text("Set Image Capture Resolution:")],
+        [sg.Text("Pic Width (in pixels):"), sg.InputText(PIC_WIDTH, size=(10, 1), enable_events=True, key=PIC_WIDTH_KEY)],
+        [sg.Text("Pic Height (in pixels):"), sg.InputText(PIC_HEIGHT, size=(10, 1), enable_events=True, key=PIC_HEIGHT_KEY)],
+        [sg.Button(UPDATE_CAMERA_TEXT)],
+        [sg.Text("Exposure Mode:"), sg.InputText(EXPOSURE_MODE, size=(10, 1), enable_events=True, key=EXPOSURE_MODE_KEY),
+         sg.Text("Expo Settle Time (in sec):"), sg.InputText(EXPO_SETTLE_TIME, size=(5, 1), key=EXPO_SETTLE_TIME_KEY), sg.Button(SET_EXPOSURE_MODE)],
+        [sg.HorizontalSeparator()],
+        [sg.Text("Preview Location (e.g. x = 0, y = 0):")],
+        [sg.Text("x:"), sg.InputText("0", size=(8, 1), enable_events=True, key=PREVIEW_LOC_X_KEY),
+         sg.Text("y:"), sg.InputText("36", size=(8, 1), enable_events=True, key=PREVIEW_LOC_Y_KEY)],
+        [sg.Text("Preview Video Size (e.g. width = 640, height = 480):")],
+        [sg.Text("width:"), sg.InputText("640", size=(8, 1), enable_events=True, key=PREVIEW_WIDTH_KEY),
+         sg.Text("height:"), sg.InputText("480", size=(8, 1), enable_events=True, key=PREVIEW_HEIGHT_KEY)],
+        [sg.Text("Opacity, or Alpha (range 0 (invisible) to 255 (opaque)):"), sg.InputText("255", size=(5, 1), enable_events=True, key=ALPHA_KEY)],
+        [sg.Button(START_PREVIEW), sg.Button(STOP_PREVIEW)]
+    ]
     
     # Z Stack Tab
     tab_4_layout = [ [sg.Text("Input Z Stack Parameters (Units are in mm):")],
@@ -1629,28 +1657,13 @@ def main():
                        [sg.Button(START_Z_STACK_CREATION_TEXT)]
                    ]
     
-    # Camera Preview Tab
-    tab_5_layout = [ [sg.Text("Preview Location (e.g. x = 0, y = 0):")],
-                     [sg.Text("x:"), sg.InputText("0", size=(8, 1), enable_events=True, key=PREVIEW_LOC_X_KEY),
-                      sg.Text("y:"), sg.InputText("36", size=(8, 1), enable_events=True, key=PREVIEW_LOC_Y_KEY)],
-                     [sg.Text("Preview Video Size (e.g. width = 640, height = 480):")],
-                     [sg.Text("width:"), sg.InputText("640", size=(8, 1), enable_events=True, key=PREVIEW_WIDTH_KEY),
-                      sg.Text("height:"), sg.InputText("480", size=(8, 1), enable_events=True, key=PREVIEW_HEIGHT_KEY)],
-                     [sg.Text("Opacity, or Alpha (range 0 (invisible) to 255 (opaque)):"), sg.InputText("255", size=(5, 1), enable_events=True, key=ALPHA_KEY)],
-                     [sg.Button(START_PREVIEW), sg.Button(STOP_PREVIEW)]
-                   ]
-    
-    tab_6_layout = WL.get_cross_hair_layout()
-    
     # TABs Layout (New, Experimental
     # TODO: Put in Pic/Video Button, test them out.
     layout = [ [sg.Image(filename='', key='-IMAGE-')],
                [sg.TabGroup([[sg.Tab("Tab 1 (Exp)", tab_1_layout, key="-TAB_1_KEY"),
                               sg.Tab("Tab 2 (Mvmt)", tab_2_layout),
                               sg.Tab("Tab 3 (CAM)", tab_3_layout),
-                              sg.Tab("Tab 4 (Z Stack)", tab_4_layout),
-                              sg.Tab("Tab 5 (Camera Preview)", tab_5_layout),
-                              sg.Tab("Tab 6 (Loc Helper)", tab_6_layout)]])
+                              sg.Tab("Tab 4 (Z Stack)", tab_4_layout)]])
                ],
                [sg.Button("Pic"), sg.Button("Vid"), sg.Button("Pic x 10")]
              ]
@@ -1683,7 +1696,11 @@ def main():
     
     # Initialize threading event (Allows you to stop the thread)
     thread_event = threading.Event()
-    
+    pause_event = threading.Event()
+
+    crosshair_overlay = None
+    corners = {"TL": None, "TR": None, "BL": None, "BR": None}
+    last_snake_csv = os.path.join(os.getcwd(), "testing", "Well_Location", "snake_path.csv")
 
     # Create window and show it without plot
     window = sg.Window("3D Printer GUI Test", layout, location=(640, 36))
@@ -1698,11 +1715,13 @@ def main():
     # Initialize current_location_dictionary to X=0, Y=0, Z=0
     
     # Initialize folder_path_sample to "" ("Start Experiment" will create unique folder name)
+    # Throttle preview window polling to reduce CPU use
+    preview_check_interval = 0.2
+    last_preview_check = time.monotonic()
     # **** Note: This for loop may cause problems if the camera feed dies, it will close everything? ****
-    # for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
     while True:
-        event, values = window.read(timeout=0)
-        event_p, values_p = window_p.read(timeout=0)
+        event, values = window.read(timeout=20)
+        event_p, values_p = window_p.read(timeout=20)
         
         # Camera Preview Initial Startup
         # Setup if/else initial_startup condition
@@ -1726,26 +1745,41 @@ def main():
             # Change is_initial_startup to False
             is_initial_startup = False
         else:
-            # print(f"is_initial_startup: {is_initial_startup}")
-            # get location of Preview Window using PID
-            x_win_preview, y_win_preview = get_window_location_from_pid(preview_win_id)
-            # print(f"x_win_preview:{x_win_preview}, y_win_preview:{y_win_preview}")
-            # camera.start_preview(alpha=255, fullscreen=False, window=(x_win_preview, y_win_preview, 640, 480))
-            
-            # If previous camera preview x/y is different, update them and call camera.start_preview
-            # (Prevents flickering if camera is still)
-            # TODO: How to slow down flickering while moving preview window?
-            if PREVIOUS_CAMERA_PREVIEW_X != x_win_preview and PREVIOUS_CAMERA_PREVIEW_Y != y_win_preview:
-                PREVIOUS_CAMERA_PREVIEW_X = x_win_preview
-                PREVIOUS_CAMERA_PREVIEW_Y = y_win_preview
-            
-                if camera.preview:
-                    camera.start_preview(alpha=PREVIEW_ALPHA, fullscreen=False, window=(x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT))
+            now = time.monotonic()
+            if now - last_preview_check >= preview_check_interval:
+                last_preview_check = now
+                x_win_preview, y_win_preview = get_window_location_from_pid(preview_win_id)
+                if (PREVIOUS_CAMERA_PREVIEW_X != x_win_preview) or (PREVIOUS_CAMERA_PREVIEW_Y != y_win_preview):
+                    PREVIOUS_CAMERA_PREVIEW_X = x_win_preview
+                    PREVIOUS_CAMERA_PREVIEW_Y = y_win_preview
+                
+                    if camera.preview:
+                        camera.start_preview(alpha=PREVIEW_ALPHA, fullscreen=False, window=(x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT))
+                        # If crosshair overlay is on, move it with the preview window
+                        if values.get("--XHAIR_ON--", True):
+                            try:
+                                current_rad = int(values.get("--XHAIR_RADIUS--", WL.CIRCLE_RADIUS))
+                            except (TypeError, ValueError):
+                                current_rad = WL.CIRCLE_RADIUS
+                            if crosshair_overlay:
+                                with CAMERA_LOCK:
+                                    camera.remove_overlay(crosshair_overlay)
+                            preview_rect = (x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+                            crosshair_overlay = WL.create_crosshair_overlay(
+                                camera,
+                                radius=current_rad,
+                                thickness=WL.CIRCLE_THICKNESS,
+                                color_bgr=WL.CIRCLE_COLOR,
+                                alpha=PREVIEW_ALPHA,
+                                preview_window=preview_rect,
+                                camera_lock=CAMERA_LOCK,
+                                existing_overlay=None
+                            )
         
         # Check Input Text for integers only
         
-        for preview_key in PREVIEW_KEY_LIST:
-            check_for_digits_in_key(preview_key, window, event, values)
+        for numeric_key in NUMERIC_KEYS:
+            check_for_digits_in_key(numeric_key, window, event, values)
         
         # Call Get Current Location Manager Function
         # Print Current Location
@@ -1790,6 +1824,8 @@ def main():
             
             # Set is_running_experiment to True, we are now running an experiment
             is_running_experiment = True
+            thread_event.clear()
+            pause_event.clear()
             
             # Uncomment to see your CSV File (is it the correct path?)
             # print("CSV File:", values[OPEN_CSV_FILEBROWSE_KEY])
@@ -1798,9 +1834,15 @@ def main():
             window[START_EXPERIMENT].update(disabled=True)
             # Enable "Stop Experiment" Button
             window[STOP_EXPERIMENT].update(disabled=False)
+            window[PAUSE_EXPERIMENT].update(disabled=False)
+            window[RESUME_EXPERIMENT].update(disabled=True)
             
             # Create actual experiment_thread
-            experiment_thread = threading.Thread(target=run_experiment2, args=(event, values, thread_event, camera, preview_win_id), daemon=True)
+            experiment_thread = threading.Thread(
+                target=run_experiment2,
+                args=(event, values, thread_event, pause_event, camera, preview_win_id),
+                daemon=True
+            )
             experiment_thread.start()
             
             # Create Unique Folder, Get that Unique Folder's Name
@@ -1817,40 +1859,31 @@ def main():
             window[START_EXPERIMENT].update(disabled=False)
             # Disable "Stop Experiment" Button
             window[STOP_EXPERIMENT].update(disabled=True)
+            window[PAUSE_EXPERIMENT].update(disabled=True)
+            window[RESUME_EXPERIMENT].update(disabled=True)
             
             # Stop thread, set prepares stopping
             thread_event.set()
+            pause_event.clear()
             
             # Stop experiemnt_thread
             experiment_thread.join(timeout=1)
+        
+        elif event == PAUSE_EXPERIMENT:
+            print("You pressed Pause Experiment")
+            pause_event.set()
+            window[PAUSE_EXPERIMENT].update(disabled=True)
+            window[RESUME_EXPERIMENT].update(disabled=False)
+        
+        elif event == RESUME_EXPERIMENT:
+            print("You pressed Resume Experiment")
+            pause_event.clear()
+            window[PAUSE_EXPERIMENT].update(disabled=False)
+            window[RESUME_EXPERIMENT].update(disabled=True)
             
         elif event == "Pic":
             print("You Pushed Pic Button")
             get_picture(camera)
-            # TODO: Change variables here to Global to match changes in Camera Tab
-            # Take a Picture, 12MP: 4056x3040
-            
-            """
-            # Display image with OpenCV (Keeps Crashing)
-            pic_capture = cv2.imread(pic_save_full_path, cv2.IMREAD_COLOR)
-            pic_resize = cv2.resize(pic_capture, MON_RES)
-            pic_window_tite = "pic_resize"
-            cv2.imshow(pic_window_tite, pic_resize)
-            print("Press 'q' to close picture")
-            key=cv2.waitKey(0)
-            if key == ord("q"):
-                cv2.destroyAllWindows()
-            
-            """
-            
-            #with PiBayerArray(camera) as stream:
-                # camera.capture(stream, 'jpeg', bayer=True)
-                # Demosaic data and write to output (just use stream.array if you
-                # want to skip the demosaic step)
-                # output = (stream.demosaic() >> 2).astype(np.uint8)
-                #with open('image.data', 'wb') as f:
-                    # output.tofile(f)
-                    # output.tofile(f)
         elif event == "Pic x 10":
             print("Pic x 10")
             x = 10
@@ -1867,17 +1900,6 @@ def main():
             print("===================================")
             print("You pressed Get Current Location!")
             get_current_location2()
-            """
-            printer.run_gcode("M114")
-            serial_string = printer.get_serial_data()
-            if GCL.does_location_exist_m114(serial_string) == True:
-                current_location_dictionary, is_location_found = GCL.parse_m114(serial_string)
-                print(current_location_dictionary)
-                # printer.printer.flush()
-            else:
-                print("Location Not Found, Try Again")
-                # printer.printer.flush()
-            """
         elif event in [X_PLUS, X_MINUS, Y_PLUS, Y_MINUS, Z_PLUS, Z_MINUS]:
             # If any of the direction buttons are pressed, move extruder
             #  in that direction using the increment radio amounts
@@ -1924,35 +1946,109 @@ def main():
         elif event == SAVE_LOC_BUTTON:
             print(f"You pressed: {SAVE_LOC_BUTTON}")
             save_current_location()
+        elif event == "--CHANGE_PLATE--":
+            # Move plate forward in Y to clear space for swapping
+            try:
+                target_y = 230
+                printer.run_gcode(f"G90")
+                printer.run_gcode(f"G0Y{target_y}")
+                print(f"Moved plate to Y={target_y} for plate change.")
+            except Exception as e:
+                print(f"Failed to move for plate change: {e}")
+        # Corner capture buttons
+        elif event in ["--SET_TL--", "--SET_TR--", "--SET_BL--", "--SET_BR--"]:
+            loc = get_current_location2()
+            coord_str = f"{loc['X']:.2f},{loc['Y']:.2f},{loc['Z']:.2f}"
+            if event == "--SET_TL--":
+                corners["TL"] = loc
+                window["--TL_COORD--"].update(coord_str)
+            elif event == "--SET_TR--":
+                corners["TR"] = loc
+                window["--TR_COORD--"].update(coord_str)
+            elif event == "--SET_BL--":
+                corners["BL"] = loc
+                window["--BL_COORD--"].update(coord_str)
+            elif event == "--SET_BR--":
+                corners["BR"] = loc
+                window["--BR_COORD--"].update(coord_str)
+        elif event == "--GEN_SNAKE--":
+            try:
+                rows = int(values.get("--NUM_ROWS--", "0"))
+                cols = int(values.get("--NUM_COLS--", "0"))
+            except ValueError:
+                print("Rows/Cols must be integers")
+                continue
+            missing = [k for k,v in corners.items() if v is None]
+            if missing:
+                print(f"Missing corners: {missing}")
+                continue
+            z_override = None
+            z_str = values.get("--Z_OVERRIDE--", "").strip()
+            if len(z_str):
+                try:
+                    z_override = float(z_str)
+                except ValueError:
+                    print("Z Override must be a number")
+                    continue
+            default_dir = os.path.join(os.getcwd(), "testing", "Well_Location")
+            outfile = os.path.join(default_dir, "snake_path.csv")
+            generate_snake_csv(corners, rows, cols, outfile, z_override=z_override)
+            last_snake_csv = outfile
+            print(f"Snake path saved to {outfile}")
+        elif event == "--APPLY_Z--":
+            z_str = values.get("--Z_OVERRIDE--", "").strip()
+            if not len(z_str):
+                print("Enter a Z Override value first")
+                continue
+            try:
+                z_override = float(z_str)
+            except ValueError:
+                print("Z Override must be a number")
+                continue
+            # Rewrite last_snake_csv with new Z
+            if not os.path.isfile(last_snake_csv):
+                print("No snake_path.csv found yet; generate first.")
+                continue
+            # Reload corners/rows/cols from existing file length
+            with open(last_snake_csv, newline="") as f:
+                reader = csv.reader(f)
+                rows_list = list(reader)
+            if len(rows_list) < 2:
+                print("Existing snake file is empty.")
+                continue
+            total_points = len(rows_list) - 1
+            # Determine rows/cols from inputs or infer nothing; just rewrite Z
+            # Simply rewrite the file with same XY, new Z
+            with open(last_snake_csv, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["image#", "Xcoord", "Ycoord", "Zcoord"])
+                for row in rows_list[1:]:
+                    if len(row) < 4:
+                        continue
+                    writer.writerow([row[0], row[1], row[2], f"{z_override:.2f}"])
+            print(f"Updated Z to {z_override:.2f} in {last_snake_csv}")
         elif event == START_PREVIEW:
-            
-            start_camera_preview(event, values, camera, preview_win_id)
-            """
             print("Starting Preview With Settings")
             if camera.preview:
                 camera.stop_preview()
-            prev_width = int(values[PREVIEW_WIDTH_KEY])
-            prev_height = int(values[PREVIEW_HEIGHT_KEY])
-            prev_loc_x = int(values[PREVIEW_LOC_X_KEY])
-            prev_loc_y = int(values[PREVIEW_LOC_Y_KEY])
-            alpha_val = int(values[ALPHA_KEY])
-            
-            # Update Global Variables so Pseudo Window has Control
-            PREVIEW_LOC_X = prev_loc_x
-            PREVIEW_LOC_Y = prev_loc_y
-            PREVIEW_WIDTH = prev_width
-            PREVIEW_HEIGHT = prev_height
-            PREVIEW_ALPHA = alpha_val
-            
-            # Move Pseudo Window to input location too
-            move_window_pid(preview_win_id, prev_loc_x, prev_loc_y - PREVIEW_WINDOW_OFFSET)
-            
-            camera.start_preview(alpha=alpha_val, fullscreen=False, window=(prev_loc_x, prev_loc_y, prev_width, prev_height))
-            
-            x_win, y_win = get_window_location_from_pid(preview_win_id)
-            print(f"x_win:{x_win}, y_win:{y_win}")
-            """
-            
+            try:
+                prev_width = int(values[PREVIEW_WIDTH_KEY])
+                prev_height = int(values[PREVIEW_HEIGHT_KEY])
+                prev_loc_x = int(values[PREVIEW_LOC_X_KEY])
+                prev_loc_y = int(values[PREVIEW_LOC_Y_KEY])
+                alpha_val = int(values[ALPHA_KEY])
+            except (TypeError, ValueError):
+                print("Invalid preview settings")
+            else:
+                PREVIEW_LOC_X = prev_loc_x
+                PREVIEW_LOC_Y = prev_loc_y
+                PREVIEW_WIDTH = prev_width
+                PREVIEW_HEIGHT = prev_height
+                PREVIEW_ALPHA = alpha_val
+                move_window_pid(preview_win_id, prev_loc_x, prev_loc_y - PREVIEW_WINDOW_OFFSET)
+                camera.start_preview(alpha=alpha_val, fullscreen=False, window=(prev_loc_x, prev_loc_y, prev_width, prev_height))
+                x_win, y_win = get_window_location_from_pid(preview_win_id)
+                print(f"x_win:{x_win}, y_win:{y_win}")
         elif event == STOP_PREVIEW:
             print("Stopping Preview")
             camera.stop_preview()
@@ -1966,8 +2062,64 @@ def main():
             PIC_SAVE_FOLDER = save_folder
 
         
-        if event in WL.ALL_CROSS_HAIR_EVENTS:
-            WL.event_manager(event, values, window, camera)
+        # Crosshair controls (Movement tab)
+        if event in ["--XHAIR_INC--", "--XHAIR_DEC--", "--XHAIR_RADIUS--"]:
+            try:
+                current_rad = int(values.get("--XHAIR_RADIUS--", WL.CIRCLE_RADIUS))
+            except (TypeError, ValueError):
+                current_rad = WL.CIRCLE_RADIUS
+            if event == "--XHAIR_INC--":
+                current_rad += 1
+            elif event == "--XHAIR_DEC--":
+                current_rad = max(1, current_rad - 1)
+            WL.CIRCLE_RADIUS = current_rad
+            window["--XHAIR_RADIUS--"].update(str(current_rad))
+            values["--XHAIR_RADIUS--"] = str(current_rad)
+            if values.get("--XHAIR_ON--", True):
+                # Update overlay on preview
+                x_win_preview, y_win_preview = get_window_location_from_pid(preview_win_id)
+                preview_rect = (x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+                crosshair_overlay = WL.create_crosshair_overlay(
+                    camera,
+                    radius=current_rad,
+                    thickness=WL.CIRCLE_THICKNESS,
+                    color_bgr=WL.CIRCLE_COLOR,
+                    alpha=PREVIEW_ALPHA,
+                    preview_window=preview_rect,
+                    camera_lock=CAMERA_LOCK,
+                    existing_overlay=crosshair_overlay
+                )
+            else:
+                if crosshair_overlay:
+                    with CAMERA_LOCK:
+                        camera.remove_overlay(crosshair_overlay)
+                    crosshair_overlay = None
+        # Well location calculator tab events
+        if event in WLC.WELL_LOCATION_EVENTS or event in [WLC.ROW_KEY, WLC.COL_KEY, WLC.SAVE_FOLDER_KEY]:
+            WLC.event_manager(event, values, window)
+        elif event == "--XHAIR_ON--":
+            if values.get("--XHAIR_ON--", True):
+                try:
+                    current_rad = int(values.get("--XHAIR_RADIUS--", WL.CIRCLE_RADIUS))
+                except (TypeError, ValueError):
+                    current_rad = WL.CIRCLE_RADIUS
+                x_win_preview, y_win_preview = get_window_location_from_pid(preview_win_id)
+                preview_rect = (x_win_preview, y_win_preview + PREVIEW_WINDOW_OFFSET, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+                crosshair_overlay = WL.create_crosshair_overlay(
+                    camera,
+                    radius=current_rad,
+                    thickness=WL.CIRCLE_THICKNESS,
+                    color_bgr=WL.CIRCLE_COLOR,
+                    alpha=PREVIEW_ALPHA,
+                    preview_window=preview_rect,
+                    camera_lock=CAMERA_LOCK,
+                    existing_overlay=crosshair_overlay
+                )
+            else:
+                if crosshair_overlay:
+                    with CAMERA_LOCK:
+                        camera.remove_overlay(crosshair_overlay)
+                    crosshair_overlay = None
         
         # print("You entered ", values[0])
         
